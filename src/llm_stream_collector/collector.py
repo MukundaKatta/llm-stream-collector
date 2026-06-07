@@ -67,6 +67,11 @@ class _PartialToolCall:
     arg_buffer: str = ""
     id: str | None = None
     index: int | None = None
+    # An initial input dict shipped on the block-start event (Anthropic). Kept
+    # separate from `arg_buffer` so that streamed JSON fragments augment it
+    # instead of being string-concatenated onto a serialized dict (which would
+    # produce invalid JSON and silently drop both).
+    seed_args: dict[str, Any] | None = None
 
 
 class Collector:
@@ -172,7 +177,12 @@ class Collector:
         finalized_tools: list[ToolCall] = []
         for idx in self._tool_order:
             partial_tc = self._tool_calls[idx]
-            args = _safe_json_loads(partial_tc.arg_buffer) if partial_tc.arg_buffer else {}
+            delta_args = _safe_json_loads(partial_tc.arg_buffer) if partial_tc.arg_buffer else {}
+            if partial_tc.seed_args is not None:
+                # Start from the seeded input and let streamed fragments win.
+                args = {**partial_tc.seed_args, **delta_args}
+            else:
+                args = delta_args
             finalized_tools.append(
                 ToolCall(
                     name=partial_tc.name or "",
@@ -230,7 +240,7 @@ class Collector:
                 # some servers include an initial input dict here
                 initial_input = block.get("input")
                 if isinstance(initial_input, dict) and initial_input:
-                    tc.arg_buffer = json.dumps(initial_input)
+                    tc.seed_args = dict(initial_input)
             return
 
         if event_type == "content_block_delta":

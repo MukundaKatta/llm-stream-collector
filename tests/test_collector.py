@@ -193,11 +193,7 @@ def openai_tool_call_chunks() -> list[dict]:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {
-                        "tool_calls": [
-                            {"index": 0, "function": {"arguments": '{"city":"'}}
-                        ]
-                    },
+                    "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"city":"'}}]},
                     "finish_reason": None,
                 }
             ],
@@ -208,9 +204,7 @@ def openai_tool_call_chunks() -> list[dict]:
                 {
                     "index": 0,
                     "delta": {
-                        "tool_calls": [
-                            {"index": 0, "function": {"arguments": 'Austin","unit":"'}}
-                        ]
+                        "tool_calls": [{"index": 0, "function": {"arguments": 'Austin","unit":"'}}]
                     },
                     "finish_reason": None,
                 }
@@ -221,11 +215,7 @@ def openai_tool_call_chunks() -> list[dict]:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {
-                        "tool_calls": [
-                            {"index": 0, "function": {"arguments": 'celsius"}'}}
-                        ]
-                    },
+                    "delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'celsius"}'}}]},
                     "finish_reason": None,
                 }
             ],
@@ -384,8 +374,46 @@ def test_anthropic_initial_input_dict_on_tool_use_block():
     )
     c.feed({"type": "content_block_stop", "index": 0})
     result = c.finalize()
+    assert result.tool_calls == [ToolCall(name="ping", arguments={"seeded": True}, id="toolu_seed")]
+
+
+def test_anthropic_initial_input_dict_then_deltas_merge():
+    """A non-empty initial 'input' dict followed by input_json_delta
+    fragments must merge: the seed is the starting point and streamed keys
+    win. Previously the seed was serialized into the same buffer the deltas
+    appended to, producing invalid JSON that silently parsed to {}."""
+    c = Collector(provider=Provider.ANTHROPIC)
+    c.feed({"type": "message_start", "message": {}})
+    c.feed(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_seed",
+                "name": "lookup",
+                "input": {"region": "us", "unit": "celsius"},
+            },
+        }
+    )
+    c.feed(
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "input_json_delta",
+                "partial_json": '{"city": "Austin", "unit": "fahrenheit"}',
+            },
+        }
+    )
+    c.feed({"type": "content_block_stop", "index": 0})
+    result = c.finalize()
     assert result.tool_calls == [
-        ToolCall(name="ping", arguments={"seeded": True}, id="toolu_seed")
+        ToolCall(
+            name="lookup",
+            arguments={"region": "us", "city": "Austin", "unit": "fahrenheit"},
+            id="toolu_seed",
+        )
     ]
 
 
@@ -679,9 +707,7 @@ def test_anthropic_tool_use_with_no_input_delta_yields_empty_args():
     )
     c.feed({"type": "content_block_stop", "index": 0})
     result = c.finalize()
-    assert result.tool_calls == [
-        ToolCall(name="noop", arguments={}, id="toolu_quiet")
-    ]
+    assert result.tool_calls == [ToolCall(name="noop", arguments={}, id="toolu_quiet")]
 
 
 def test_collected_message_is_frozen():
